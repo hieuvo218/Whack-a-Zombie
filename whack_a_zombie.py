@@ -58,25 +58,40 @@ DESPAWN_ANIM_MS = 220
 
 def try_make_sound():
     """Return (hit_sound, mute_flag_supported)
-    Attempts to synthesize a short click sound. If numpy/mixer is unavailable, returns (None, False).
+    Attempts to synthesize a short, punchy 'whack' sound for Whack a Zombie.
+    If numpy/mixer is unavailable, returns (None, False).
     """
     try:
+        # Initialize pygame mixer with mono channel
         pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
         try:
             import numpy as np  # optional
-        except Exception:
+        except ImportError:
             return None, False
 
         sr = 22050
-        dur = 0.08
+        dur = 0.05  # Shorter duration for a sharp impact
         t = np.linspace(0, dur, int(sr * dur), endpoint=False)
-        # A short percussive blip
-        wave = (np.sin(2 * np.pi * 880 * t) * np.exp(-18 * t)) * 0.6
+        # Combine a low-frequency thump (200 Hz) with a sharp click (1000 Hz)
+        thump = np.sin(2 * np.pi * 200 * t) * np.exp(-50 * t) * 0.7  # Heavy, quick decay
+        click = np.sin(2 * np.pi * 1000 * t) * np.exp(-80 * t) * 0.3  # Sharp transient
+        wave = (thump + click) * 0.8  # Combine and scale amplitude
+        # Add a slight noise component for grit
+        noise = np.random.normal(0, 0.1, t.size) * np.exp(-60 * t)
+        wave = (wave + noise) * 0.8
         # Convert to int16
         arr = (wave * 32767).astype(np.int16)
-        sound = pygame.sndarray.make_sound(arr.copy())
+
+        # Ensure array matches mixer channel configuration
+        if pygame.mixer.get_init()[1] == 1:  # Mono
+            sound = pygame.sndarray.make_sound(arr.copy())
+        else:  # Stereo
+            arr_stereo = np.column_stack((arr, arr))  # Duplicate for stereo
+            sound = pygame.sndarray.make_sound(arr_stereo.copy())
+
         return sound, True
-    except Exception:
+    except Exception as e:
+        print(f"Error: {e}")
         return None, False
 
 
@@ -88,6 +103,7 @@ class Zombie:
         self.lifetime_ms = random.randint(SPAWN_MIN_MS, SPAWN_MAX_MS)
         self.state = "spawning"  # spawning -> alive -> despawning -> dead
         self.hit_registered = False
+        self.was_hit = False
         self.state_time = self.spawn_time  # timestamp of entering current state
 
     def update(self, now):
@@ -112,6 +128,7 @@ class Zombie:
 
     def register_hit(self):
         self.hit_registered = True
+        self.was_hit = True
         # Immediately transition to despawn, but allow animation
         self.state = "despawning"
         self.state_time = pygame.time.get_ticks()
@@ -136,17 +153,33 @@ class Zombie:
         pygame.draw.circle(surf, (0, 0, 0, 30), (self.x + 6, self.y + 10), int(r * 0.95))
 
         # Face base
-        pygame.draw.circle(surf, ZOMBIE_FACE["skin"], (self.x, self.y), r)
+        if self.was_hit:
+            # Flash zombie red when hit
+            face_color = (200, 40, 40)
+        else:
+            face_color = ZOMBIE_FACE["skin"]
+
+        pygame.draw.circle(surf, face_color, (self.x, self.y), r)
         # Top-left shading
         pygame.draw.circle(surf, ZOMBIE_FACE["shadow"], (self.x - int(r*0.2), self.y - int(r*0.2)), int(r*1.02), width=4)
 
         # Eyes
-        ex = int(r * 0.45)
-        ey = int(r * 0.20)
-        pygame.draw.circle(surf, ZOMBIE_FACE["eye"], (self.x - ex, self.y - ey), int(r * 0.28))
-        pygame.draw.circle(surf, ZOMBIE_FACE["eye"], (self.x + ex, self.y - ey), int(r * 0.24))
-        pygame.draw.circle(surf, ZOMBIE_FACE["pupil"], (self.x - ex, self.y - ey), int(r * 0.10))
-        pygame.draw.circle(surf, ZOMBIE_FACE["pupil"], (self.x + ex, self.y - ey), int(r * 0.08))
+        if self.was_hit:
+            # Draw X eyes instead of normal
+            eye_offset = int(r * 0.35)
+            for dx in (-eye_offset, eye_offset):
+                ex, ey = self.x + dx, self.y - int(r * 0.15)
+                pygame.draw.line(surf, (0, 0, 0), (ex - 8, ey - 8), (ex + 8, ey + 8), 3)
+                pygame.draw.line(surf, (0, 0, 0), (ex + 8, ey - 8), (ex - 8, ey + 8), 3)
+        else:
+            # Normal eyes (your existing code)
+            ex = int(r * 0.45)
+            ey = int(r * 0.20)
+            pygame.draw.circle(surf, ZOMBIE_FACE["eye"], (self.x - ex, self.y - ey), int(r * 0.28))
+            pygame.draw.circle(surf, ZOMBIE_FACE["eye"], (self.x + ex, self.y - ey), int(r * 0.24))
+            pygame.draw.circle(surf, ZOMBIE_FACE["pupil"], (self.x - ex, self.y - ey), int(r * 0.10))
+            pygame.draw.circle(surf, ZOMBIE_FACE["pupil"], (self.x + ex, self.y - ey), int(r * 0.08))
+
 
         # Scar
         pygame.draw.line(surf, ZOMBIE_FACE["scar"], (self.x - int(r*0.7), self.y - int(r*0.55)),
@@ -171,6 +204,16 @@ class Zombie:
 
 def main():
     pygame.init()
+
+    # Initialize audio
+    try:
+        pygame.mixer.init()
+        pygame.mixer.music.load("background.mp3")   # replace with your file
+        pygame.mixer.music.set_volume(0.5)          # volume (0.0 to 1.0)
+        pygame.mixer.music.play(-1)                 # -1 = loop forever
+    except Exception as e:
+        print(f"Background music unavailable: {e}")
+
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Whack-a-Zombie")
     clock = pygame.time.Clock()
@@ -205,6 +248,10 @@ def main():
                     running = False
                 elif event.key == pygame.K_m and sound_supported:
                     is_muted = not is_muted
+                    if is_muted:
+                        pygame.mixer.music.set_volume(0.0)
+                    else:
+                        pygame.mixer.music.set_volume(0.5)   # restore preferred volume
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # Only one head counted per click
                 if zombie and zombie.is_clickable() and zombie.hit_test(event.pos):
