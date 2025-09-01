@@ -204,12 +204,13 @@ class Zombie:
 
 def main():
     pygame.init()
+    volume = 0.5
 
     # Initialize audio
     try:
         pygame.mixer.init()
         pygame.mixer.music.load("background.mp3")   # replace with your file
-        pygame.mixer.music.set_volume(0.5)          # volume (0.0 to 1.0)
+        pygame.mixer.music.set_volume(volume)          # volume (0.0 to 1.0)
         pygame.mixer.music.play(-1)                 # -1 = loop forever
     except Exception as e:
         print(f"Background music unavailable: {e}")
@@ -252,6 +253,12 @@ def main():
                         pygame.mixer.music.set_volume(0.0)
                     else:
                         pygame.mixer.music.set_volume(0.5)   # restore preferred volume
+                elif event.key == pygame.K_LEFT:
+                    volume = max(0.0, volume - 0.1)
+                    pygame.mixer.music.set_volume(volume)
+                elif event.key == pygame.K_RIGHT:
+                    volume = min(1.0, volume + 0.1)
+                    pygame.mixer.music.set_volume(volume)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # Only one head counted per click
                 if zombie and zombie.is_clickable() and zombie.hit_test(event.pos):
@@ -295,7 +302,8 @@ def main():
             f"Hits: {hits}",
             f"Misses: {misses}",
             f"Accuracy: {acc:.1f}%",
-            "Press M to mute" if sound_supported else "Sound unavailable",
+            f"Volume: {int(volume*100)}%" if not is_muted else "Muted (M to unmute)",
+            "Use ← → to adjust volume",
         ]
         # Render in top-left corner
         y = 12
